@@ -137,7 +137,7 @@ class ChunkParser(object):
         return len(data) > 0, data
 
 
-class HttpParser(object):
+class HttpParser(LogObject):
     """HTTP request/response parser."""
 
     states = namedtuple('HttpParserStates', (
@@ -153,7 +153,8 @@ class HttpParser(object):
         'RESPONSE_PARSER'
     ))(1, 2)
 
-    def __init__(self, parser_type):
+    def __init__(self, parser_type, log_path=''):
+        LogObject.__init__(self, log_path)
         assert parser_type in (HttpParser.types.REQUEST_PARSER, 
                 HttpParser.types.RESPONSE_PARSER)
         self.type = parser_type
@@ -192,6 +193,7 @@ class HttpParser(object):
 
 
     def process(self, data):
+        self.log.debug('process [{}]'.format(self.state))
         if (self.state in (HttpParser.states.HEADERS_COMPLETE,
                           HttpParser.states.RCVING_BODY,
                           HttpParser.states.COMPLETE) and 
@@ -214,9 +216,9 @@ class HttpParser(object):
                     self.state = HttpParser.states.COMPLETE
             return False, b''
 
-        line, data = HttpParser.split(data)
+        line, remain = HttpParser.split(data)
         if line is False:
-            return line, data
+            return line, remain
 
         if self.state == HttpParser.states.INITIALIZED:
             self.process_line(line)
@@ -224,10 +226,16 @@ class HttpParser(object):
                 HttpParser.states.RCVING_HEADERS):
             self.process_header(line)
 
-        if (self.state == HttpParser.states.LINE_RCVD and 
+        # fixed bug: when client send CONNECT with 2 pkg 
+        if (self.state == HttpParser.states.RCVING_HEADERS and 
                 self.type == HttpParser.types.REQUEST_PARSER and 
                 self.method == b'CONNECT' and 
-                data == CRLF):
+                not remain):
+            self.state = HttpParser.states.COMPLETE
+        elif (self.state == HttpParser.states.LINE_RCVD and 
+                self.type == HttpParser.types.REQUEST_PARSER and 
+                self.method == b'CONNECT' and 
+                remain == CRLF):
             self.state = HttpParser.states.COMPLETE
         elif (self.state == HttpParser.states.HEADERS_COMPLETE and 
                 self.type == HttpParser.types.REQUEST_PARSER and 
@@ -242,15 +250,18 @@ class HttpParser(object):
                   int(self.headers[b'content-length'][1]) == 0)) and 
                 self.raw.endswith(CRLF * 2)):
             self.state = HttpParser.states.COMPLETE
-        return len(data) > 0, data
+        return len(remain) > 0, remain
 
 
     def process_line(self, data):
+        self.log.debug('process_line')
         line = data.split(SPACE)
         if self.type == HttpParser.types.REQUEST_PARSER:
             self.method = line[0].upper()
             self.url = urlparse.urlsplit(line[1])
             self.version = line[2]
+            self.log.debug('[{}][{}][{}]'.format(self.method, self.url, 
+                    self.version))
         else:
             self.version = line[0]
             self.code = line[1]
@@ -259,6 +270,7 @@ class HttpParser(object):
 
 
     def process_header(self, data):
+        self.log.debug('process_header [{}]'.format(data))
         if len(data) == 0:
             if self.state == HttpParser.states.RCVING_HEADERS:
                 self.state = HttpParser.states.HEADERS_COMPLETE
@@ -437,8 +449,8 @@ class Tunnel(threading.Thread, LogObject):
         self.server = None
         self.server_recvbuf_size = server_recvbuf_size
 
-        self.request = HttpParser(HttpParser.types.REQUEST_PARSER)
-        self.response = HttpParser(HttpParser.types.RESPONSE_PARSER)
+        self.request = HttpParser(HttpParser.types.REQUEST_PARSER, self.log_path)
+        self.response = HttpParser(HttpParser.types.RESPONSE_PARSER, self.log_path)
 
 
     def _is_inactive(self):
@@ -457,6 +469,7 @@ class Tunnel(threading.Thread, LogObject):
     
     def _process(self):
         while True:
+            self.log.debug('_process')
             rlist, wlist, xlist = self._get_waitable_lists()
             r, w, x = select.select(rlist, wlist, xlist, 1)
 
@@ -526,6 +539,7 @@ class Tunnel(threading.Thread, LogObject):
 
 
     def _process_request(self, data):
+        self.log.debug('_process_request [{}]'.format(self.request.state))
         # redirect data to server once connected
         if self.server and not self.server.closed:
             self.server.queue(data)

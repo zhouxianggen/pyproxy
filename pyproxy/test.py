@@ -4,8 +4,13 @@ import requests
 
 
 url = 'https://www.cnblogs.com/dzqdzq/p/9822187.html'
-proxies = {'http': 'http://localhost:8899', 
-        'https': 'http://localhost:8899'}
+if len(sys.argv) > 1:
+    url = sys.argv[1]
+
+host = 'localhost'
+host = '183.164.234.225'
+proxies = {'http': 'http://{}:8899'.format(host), 
+        'https': 'http://{}:8899'.format(host)}
 r = requests.get(url, proxies=proxies)
 print(r.status_code)
 print(len(r.content))
