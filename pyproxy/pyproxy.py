@@ -441,6 +441,7 @@ class Tunnel(threading.Thread, LogObject):
             client_recvbuf_size=8192, log_path=''):
         LogObject.__init__(self, log_path=log_path)
         threading.Thread.__init__(self)
+        self.daemon = True
 
         self.start_time = time.time()
         self.last_activity = self.start_time
