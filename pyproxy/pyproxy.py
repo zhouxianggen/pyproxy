@@ -46,14 +46,14 @@ PROXY_AUTHENTICATION_REQUIRED_RESPONSE_PKT = CRLF.join([
 
 
 class LogObject(object):
-    def __init__(self, log_path=None, log_level=logging.INFO):
-        self.log_path = log_path
+    def __init__(self, log_file=None, log_level=logging.INFO):
+        self.log_file = log_file
         self.log_level = log_level
         self.log = logging.getLogger(self.__class__.__name__)
         if not self.log.handlers:
-            if log_path:
+            if log_file:
                 handler = logging.handlers.RotatingFileHandler(
-                        log_path, maxBytes=1024*1024*500, backupCount=10)
+                        log_file, maxBytes=1024*1024*500, backupCount=10)
             else:
                 handler = logging.StreamHandler()
             handler.setFormatter(logging.Formatter(
@@ -61,29 +61,6 @@ class LogObject(object):
                     '%(asctime)s] %(message)s'))
             self.log.addHandler(handler)
         self.log.setLevel(log_level)
-
-
-class Runtime(threading.Thread):
-    def __init__(self, job_interval=1):
-        threading.Thread.__init__(self)
-        self.daemon = True
-        self.job_interval = job_interval
-        self.runtime_path = os.path.join(
-                os.path.dirname(os.path.abspath(__file__)), '.runtime')
-
-
-    def run(self):
-        while 1:
-            open(self.runtime_path, 'wb').write(str(int(time.time())))
-            time.sleep(self.job_interval)
-    
-    
-    def is_running(self):
-        if os.path.isfile(self.runtime_path):
-            c = open(self.runtime_path, 'rb').read()
-            if c.isdigit():
-                return int(c) + self.job_interval + 1 > int(time.time())
-        return False
 
 
 class ChunkParser(object):
@@ -154,8 +131,8 @@ class HttpParser(LogObject):
         'RESPONSE_PARSER'
     ))(1, 2)
 
-    def __init__(self, parser_type, log_path=''):
-        LogObject.__init__(self, log_path)
+    def __init__(self, parser_type, log_file=''):
+        LogObject.__init__(self, log_file)
         assert parser_type in (HttpParser.types.REQUEST_PARSER, 
                 HttpParser.types.RESPONSE_PARSER)
         self.type = parser_type
@@ -340,8 +317,8 @@ class HttpParser(LogObject):
 class Connection(LogObject):
     """TCP server/client connection abstraction."""
 
-    def __init__(self, what, log_path=''):
-        LogObject.__init__(self, log_path)
+    def __init__(self, what, log_file=''):
+        LogObject.__init__(self, log_file)
         self.conn = None
         self.buffer = b''
         self.closed = False
@@ -389,8 +366,8 @@ class Connection(LogObject):
 
 
 class Server(Connection):
-    def __init__(self, host, port, log_path=''):
-        super(Server, self).__init__('server', log_path)
+    def __init__(self, host, port, log_file=''):
+        super(Server, self).__init__('server', log_file)
         self.addr = (host, int(port))
 
     def __del__(self):
@@ -402,8 +379,8 @@ class Server(Connection):
 
 
 class Client(Connection):
-    def __init__(self, conn, addr, log_path=''):
-        super(Client, self).__init__('client', log_path)
+    def __init__(self, conn, addr, log_file=''):
+        super(Client, self).__init__('client', log_file)
         self.conn = conn
         self.addr = addr
 
@@ -439,8 +416,8 @@ class Tunnel(threading.Thread, LogObject):
     """
 
     def __init__(self, client, server_recvbuf_size=8192, 
-            client_recvbuf_size=8192, log_path=''):
-        LogObject.__init__(self, log_path=log_path)
+            client_recvbuf_size=8192, log_file=''):
+        LogObject.__init__(self, log_file=log_file)
         threading.Thread.__init__(self)
 
         self.start_time = time.time()
@@ -450,8 +427,8 @@ class Tunnel(threading.Thread, LogObject):
         self.server = None
         self.server_recvbuf_size = server_recvbuf_size
 
-        self.request = HttpParser(HttpParser.types.REQUEST_PARSER, self.log_path)
-        self.response = HttpParser(HttpParser.types.RESPONSE_PARSER, self.log_path)
+        self.request = HttpParser(HttpParser.types.REQUEST_PARSER, self.log_file)
+        self.response = HttpParser(HttpParser.types.RESPONSE_PARSER, self.log_file)
 
 
     def _is_inactive(self):
@@ -559,7 +536,7 @@ class Tunnel(threading.Thread, LogObject):
             else:
                 raise Exception('Invalid request\n%s' % self.request.raw)
 
-            self.server = Server(host, port, self.log_path)
+            self.server = Server(host, port, self.log_file)
             try:
                 self.log.info('connecting server [{}]:[{}]'.format(host, port))
                 self.server.connect()
@@ -585,9 +562,8 @@ class Tunnel(threading.Thread, LogObject):
 
     
 class TCPServer(LogObject):
-    def __init__(self, hostname='0.0.0.0', port=8899, backlog=100, log_path=''):
-        LogObject.__init__(self, log_path=log_path)
-        self.runtime = Runtime()
+    def __init__(self, hostname='0.0.0.0', port=8899, backlog=100, log_file=''):
+        LogObject.__init__(self, log_file=log_file)
         self.hostname = hostname
         self.port = port
         self.backlog = backlog
@@ -599,10 +575,6 @@ class TCPServer(LogObject):
 
 
     def run(self):
-        if self.runtime.is_running():
-            self.log.info('server already runing, exit.. ')
-            return
-        
         try:
             self.log.info('Starting server on port %d' % self.port)
             self.socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -611,7 +583,7 @@ class TCPServer(LogObject):
             self.socket.listen(self.backlog)
             while True:
                 conn, addr = self.socket.accept()
-                client = Client(conn, addr, self.log_path)
+                client = Client(conn, addr, self.log_file)
                 self.handle(client)
         except Exception as e:
             self.log.exception(e)
@@ -623,8 +595,8 @@ class TCPServer(LogObject):
 class PyProxy(TCPServer):
     def __init__(self, hostname='0.0.0.0', port=8899, backlog=100,
                  server_recvbuf_size=8192, client_recvbuf_size=8192, 
-                 log_path=''):
-        TCPServer.__init__(self, hostname, port, backlog, log_path)
+                 log_file=''):
+        TCPServer.__init__(self, hostname, port, backlog, log_file)
         self.client_recvbuf_size = client_recvbuf_size
         self.server_recvbuf_size = server_recvbuf_size
 
@@ -634,7 +606,7 @@ class PyProxy(TCPServer):
         tunnel = Tunnel(client,
                       server_recvbuf_size=self.server_recvbuf_size,
                       client_recvbuf_size=self.client_recvbuf_size, 
-                      log_path=self.log_path)
+                      log_file=self.log_file)
         tunnel.start()
 
 
@@ -643,6 +615,13 @@ def set_open_file_limit(limit):
         soft_limit, hard_limit = resource.getrlimit(resource.RLIMIT_NOFILE)
         if soft_limit < limit < hard_limit:
             resource.setrlimit(resource.RLIMIT_NOFILE, (limit, hard_limit))
+
+
+def is_addr_used(host, port):
+    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    result = sock.connect_ex((host, port))
+    sock.close()
+    return True if result == 0 else False
 
 
 def main():
@@ -654,8 +633,12 @@ def main():
     parser.add_argument('--server-recvbuf-size', default='8192', type=int)
     parser.add_argument('--client-recvbuf-size', default='8192', type=int)
     parser.add_argument('--open-file-limit', default='1024', type=int)
-    parser.add_argument('--log-path', default='')
+    parser.add_argument('--log-file', default='')
     args = parser.parse_args()
+
+    if is_addr_used(args.hostname, args.port):
+        print('server already run. exit ..')
+        return
 
     set_open_file_limit(int(args.open_file_limit))
     proxy = PyProxy(hostname=args.hostname,
@@ -663,7 +646,7 @@ def main():
             backlog=args.backlog,
             server_recvbuf_size=args.server_recvbuf_size,
             client_recvbuf_size=args.client_recvbuf_size, 
-            log_path=args.log_path)
+            log_file=args.log_file)
     proxy.run()
 
 
